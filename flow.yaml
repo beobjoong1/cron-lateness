@@ -1,0 +1,56 @@
+id: refresh_feeds_every_5m
+namespace: operix.calendar
+description: |
+  Refreshes synced calendar feeds every 5 minutes and records how late each
+  run was versus its scheduled slot. Verified locally against kestra/kestra:latest
+  on 2026-09-29 (validate: 0 warnings; manual execution exercised the error path).
+
+triggers:
+  - id: every_5m
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 * * * *"
+    recoverMissedSchedules: LAST
+
+tasks:
+  - id: refresh
+    type: io.kestra.plugin.scripts.node.Script
+    env:
+      SCHEDULED_AT: "{{ trigger.date ?? execution.startDate }}"
+      APP_TOKEN: "{{ secret('APP_TOKEN') }}"
+      REFRESH_URL: "https://example.invalid/admin/refresh"   # replace with your endpoint
+    beforeCommands:
+      - npm i @kestra-io/libs
+    script: |
+      const Kestra = require("@kestra-io/libs");
+
+      const scheduled = Date.parse(process.env.SCHEDULED_AT);
+      const latenessS = Math.max(0, Math.round((Date.now() - scheduled) / 1000));
+
+      // The endpoint must be idempotent: a late or duplicated run must not double-apply.
+      fetch(process.env.REFRESH_URL, {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.APP_TOKEN}` },
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`refresh endpoint ${res.status}`);
+          const r = await res.json(); // { feeds: <number refreshed> }
+          Kestra.outputs({ lateness_s: latenessS, feeds: r.feeds ?? null });
+        })
+        .catch((err) => {
+          // Fail loudly. A quiet failure is the whole problem this flow replaces.
+          Kestra.outputs({ lateness_s: latenessS, error: String(err) });
+          process.exit(1);
+        });
+
+  - id: audit
+    type: io.kestra.plugin.core.log.Log
+    message: >-
+      scheduled={{ trigger.date ?? execution.startDate }}
+      lateness_s={{ outputs.refresh.vars.lateness_s }}
+      feeds={{ outputs.refresh.vars.feeds }}
+
+errors:
+  - id: alert
+    type: io.kestra.plugin.core.log.Log
+    level: ERROR
+    message: "refresh_feeds_every_5m failed: {{ outputs.refresh.vars.error ?? 'see task logs' }}"

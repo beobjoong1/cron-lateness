@@ -1,0 +1,33 @@
+# .github/workflows/heartbeat.yml
+# Records one line per scheduled run so you can measure how late GitHub Actions really is.
+# Each line: {"scheduled":"<slot the run was meant for>","started":"<actual start>"}
+name: heartbeat
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: append heartbeat
+        run: |
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # scheduled slot = start time floored to the 5-minute boundary of the *intended* cron
+          epoch=$(date -u -d "$started" +%s)
+          slot=$(( epoch - epoch % 300 ))
+          scheduled="$(date -u -d "@$slot" +%Y-%m-%dT%H:%M:%SZ)"
+          printf '{"scheduled":"%s","started":"%s"}\n' "$scheduled" "$started" >> heartbeat.jsonl
+          git config user.name heartbeat
+          git config user.email heartbeat@users.noreply.github.com
+          git add heartbeat.jsonl
+          git commit -m "heartbeat $started" || exit 0
+          git push
+# Note: flooring "started" to the slot under-measures lateness when a run is more than 5 minutes late,
+# because it snaps to the *nearest past* slot. lateness.mjs therefore also counts missed slots:
+# every 5-minute slot between the first and last heartbeat that has no run is a drop.
