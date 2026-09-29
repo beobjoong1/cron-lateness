@@ -19,7 +19,7 @@ tasks:
       APP_TOKEN: "{{ secret('APP_TOKEN') }}"
       REFRESH_URL: "https://example.invalid/admin/refresh"   # replace with your endpoint
     beforeCommands:
-      - npm i @kestra-io/libs
+      - npm i @kestra-io/libs --no-audit --no-fund 2>&1
     script: |
       const Kestra = require("@kestra-io/libs");
 
